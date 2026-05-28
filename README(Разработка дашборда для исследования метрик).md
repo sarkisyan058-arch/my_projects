@@ -1,0 +1,3 @@
+[дашборд.txt](https://github.com/user-attachments/files/28350841/default.txt)
+https://datalens.yandex/vz8537bkhpqmf -дашборд
+
