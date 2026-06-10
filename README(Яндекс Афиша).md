@@ -1,5 +1,6 @@
 [Яндекс Афиша.py](https://github.com/user-attachments/files/28442429/default.py)
-https://disk.yandex.ru/i/wJ6fxvTnrQsPVg - ссылка на дашборд работы
+[Ссылка на дашборд работы](https://disk.yandex.ru/i/wJ6fxvTnrQsPVg)
+
 
 # **1. Загрузка данных и знакомство с ними**
 
