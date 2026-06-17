@@ -51,13 +51,10 @@ Jupyter Notebook
 Языки
 Русский: родной
 
-Английский: уровень B1
 
 Контакты
 Email: sarkisyan058@gmail.com
 Telegram: https://t.me/Artem121206
 Яндекс Месседжер: https://yandex.ru/chat/p/6f548407-af63-920a-54aa-7c642da5bb6f?utm_source=invite
 VK: id34110147
-
-Телефон: +7 (965) 707-05-68
 
