@@ -1,0 +1,240 @@
+/* Проект первого модуля: анализ данных для агентства недвижимости
+ * Часть 2. Решаем ad hoc задачи
+ *
+ * Автор:Артем Саркисян
+ * Дата:26.12.25
+*/
+
+
+
+-- Задача 1: Время активности объявлений
+-- Определим аномальные значения (выбросы)
+WITH 
+-- 1. Фильтрация от аномалий (используем ранее полученные лимиты)
+limits AS (
+    SELECT
+        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY total_area) AS total_area_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY rooms) AS rooms_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY balcony) AS balcony_limit,
+        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_h,
+        PERCENTILE_CONT(0.01) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_l
+    FROM real_estate.flats
+),
+filtered_id AS (
+    SELECT id
+    FROM real_estate.flats
+    WHERE
+        total_area < (SELECT total_area_limit FROM limits)
+        AND (rooms < (SELECT rooms_limit FROM limits) OR rooms IS NULL)
+        AND (balcony < (SELECT balcony_limit FROM limits) OR balcony IS NULL)
+        AND ((ceiling_height < (SELECT ceiling_height_limit_h FROM limits)
+            AND ceiling_height > (SELECT ceiling_height_limit_l FROM limits)) OR ceiling_height IS NULL)
+),
+-- 2. Подготовка основных данных (2015–2018, только города)
+base_data AS (
+    SELECT
+        a.id,
+        a.days_exposition,
+        a.last_price,
+        f.total_area,
+        f.rooms,
+        f.balcony,
+        f.floor,
+        f.ceiling_height,
+        c.city,
+        t.type
+    FROM real_estate.advertisement a
+    JOIN real_estate.flats f ON a.id = f.id
+    JOIN real_estate.city c ON f.city_id = c.city_id
+    JOIN real_estate.type t ON f.type_id = t.type_id
+    WHERE
+        EXTRACT(YEAR FROM a.first_day_exposition) BETWEEN 2015 AND 2018
+        AND f.id IN (SELECT id FROM filtered_id)  -- фильтрация от аномалий
+        AND t.type = 'город'  -- только города
+),
+-- 3. Категоризация по региону и длительности, расчёт цены за кв. м
+classified_data AS (
+    SELECT
+        *,
+        -- Регион: Санкт‑Петербург или ЛенОбл
+        CASE
+            WHEN city = 'Санкт-Петербург' THEN 'Санкт-Петербург'
+            ELSE 'ЛенОбл'
+        END AS Регион,
+        
+        -- Категория по длительности активности
+        CASE
+            WHEN days_exposition IS NULL THEN 'non category'
+            WHEN days_exposition BETWEEN 1 AND 30 THEN '1-30 дней'
+            WHEN days_exposition BETWEEN 31 AND 90 THEN '31-90 дней'
+            WHEN days_exposition BETWEEN 91 AND 180 THEN '91-180 дней'
+            WHEN days_exposition >= 181 THEN '181+ дней'
+            ELSE 'non category'
+        END AS Категория_длительности,
+        
+        -- Цена за кв. м
+        ROUND((last_price::NUMERIC / total_area::NUMERIC), 2) AS Цена_за_кв_м
+    FROM base_data
+),
+-- 4. Агрегация по региону и категории длительности
+summary AS (
+    SELECT
+        Регион,
+        Категория_длительности,
+        COUNT(id) AS Количество_объявлений,
+        ROUND(AVG(total_area)::NUMERIC) AS Средняя_площадь_м2,
+        ROUND(AVG(last_price::NUMERIC / total_area::NUMERIC)::NUMERIC, 0) AS Средняя_стоимость_руб_м2,
+        ROUND(AVG(rooms)::NUMERIC) AS Среднее_количество_комнат,
+        ROUND(AVG(balcony)::NUMERIC) AS Среднее_количество_балконов,
+        ROUND(AVG(floor)::NUMERIC) AS Средний_этаж,
+        ROUND(AVG(ceiling_height)::NUMERIC) AS Средняя_высота_потолка_м
+    FROM classified_data
+    --WHERE Категория_длительности != 'non category' Людмила привет! Речь шла об этой строчке? )) Только не совсем понял, На графике с топ-5 по дням необходимо проверить, что сортировка совпадает с основным расчетом, иначе она может сбиваться: Что именно нужно проверить? Чарт?
+    GROUP BY Регион, Категория_длительности
+),
+-- 5. Расчёт долей объявлений в разрезе региона
+region_totals AS (
+    SELECT
+        Регион,
+        SUM(Количество_объявлений) AS Общее_количество_по_региону
+    FROM summary
+    GROUP BY Регион
+),
+final_summary AS (
+    SELECT
+        s.Регион,
+        s.Категория_длительности,
+        s.Количество_объявлений,
+        ROUND((s.Количество_объявлений::NUMERIC / rt.Общее_количество_по_региону) * 100, 1) AS Доля_объявлений_проц,
+        s.Средняя_площадь_м2,
+        s.Средняя_стоимость_руб_м2,
+        s.Среднее_количество_комнат,
+        s.Среднее_количество_балконов,
+        s.Средний_этаж,
+        s.Средняя_высота_потолка_м
+    FROM summary s
+    JOIN region_totals rt ON s.Регион = rt.Регион
+)
+-- 6. Итоговый вывод
+SELECT
+    Регион,
+    Категория_длительности,
+    Количество_объявлений,
+    Доля_объявлений_проц,
+    Средняя_площадь_м2,
+    Средняя_стоимость_руб_м2,
+    Среднее_количество_комнат,
+    Среднее_количество_балконов,
+    Средний_этаж,
+    Средняя_высота_потолка_м
+FROM final_summary
+ORDER BY
+    Регион,
+    CASE Категория_длительности
+        WHEN '1-30 дней' THEN 1
+        WHEN '31-90 дней' THEN 2
+        WHEN '91-180 дней' THEN 3
+        WHEN '181+ дней' THEN 4
+        ELSE 5
+    END;
+        
+        
+-- Задача 2: Сезонность объявлений
+-- Определим аномальные значения (выбросы)        
+               
+WITH
+-- 1. Фильтрация от аномалий (используем ранее определённые лимиты)
+limits AS (
+    SELECT
+        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY total_area) AS total_area_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY rooms) AS rooms_limit,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY balcony) AS balcony_limit,
+        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_h,
+        PERCENTILE_CONT(0.01) WITHIN GROUP (ORDER BY ceiling_height) AS ceiling_height_limit_l
+    FROM real_estate.flats
+),
+filtered_id AS (
+    SELECT id
+    FROM real_estate.flats
+    WHERE
+        total_area < (SELECT total_area_limit FROM limits)
+        AND (rooms < (SELECT rooms_limit FROM limits) OR rooms IS NULL)
+        AND (balcony < (SELECT balcony_limit FROM limits) OR balcony IS NULL)
+        AND ((ceiling_height < (SELECT ceiling_height_limit_h FROM limits)
+            AND ceiling_height > (SELECT ceiling_height_limit_l FROM limits)) OR ceiling_height IS NULL)
+),
+-- 2. Основные данные за 2015–2018 гг. (только города)
+base_data AS (
+    SELECT
+        a.id,
+        a.first_day_exposition AS Дата_публикации,
+        a.days_exposition,
+        a.last_price,
+        f.total_area,
+        c.city,
+        t.type
+    FROM real_estate.advertisement a
+    JOIN real_estate.flats f ON a.id = f.id
+    JOIN real_estate.city c ON f.city_id = c.city_id
+    JOIN real_estate.type t ON f.type_id = t.type_id
+    WHERE
+        EXTRACT(YEAR FROM a.first_day_exposition) BETWEEN 2015 AND 2018
+        AND f.id IN (SELECT id FROM filtered_id)
+        AND t.type = 'город'
+),
+-- 3. Расчёт дат снятия и выделение месяцев
+monthly_data AS (
+    SELECT
+        Дата_публикации,
+        EXTRACT(MONTH FROM Дата_публикации) AS Месяц_публикации,
+        (Дата_публикации + INTERVAL '1 day' * days_exposition) AS Дата_снятия,
+        EXTRACT(MONTH FROM (Дата_публикации + INTERVAL '1 day' * days_exposition)) AS Месяц_снятия,
+        total_area AS Общая_площадь,
+        last_price AS Последняя_цена,
+        -- Цена за кв. м
+        ROUND((last_price::NUMERIC / total_area::NUMERIC), 2) AS Цена_за_кв_м,
+        city AS Город
+    FROM base_data
+),
+-- 4. Агрегация по месяцу публикации
+publish_stats AS (
+    SELECT
+        Месяц_публикации AS Месяц,
+        'публикация' AS Тип_периода,
+        COUNT(*) AS Количество_объявлений,
+        ROUND(AVG(Общая_площадь)::NUMERIC, 1) AS Средняя_площадь,
+        ROUND(AVG(Цена_за_кв_м)::NUMERIC, 0) AS Средняя_цена_за_кв_м
+    FROM monthly_data
+    GROUP BY Месяц_публикации
+),
+-- 5. Агрегация по месяцу снятия
+remove_stats AS (
+    SELECT
+        Месяц_снятия AS Месяц,
+        'снятие' AS Тип_периода,
+        COUNT(*) AS Количество_объявлений,
+        ROUND(AVG(Общая_площадь)::NUMERIC, 1) AS Средняя_площадь,
+        ROUND(AVG(Цена_за_кв_м)::NUMERIC, 0) AS Средняя_цена_за_кв_м
+    FROM monthly_data
+    GROUP BY Месяц_снятия
+),
+-- 6. Объединение результатов
+combined_stats AS (
+    SELECT * FROM publish_stats
+    UNION ALL
+    SELECT * FROM remove_stats
+)
+-- 7. Итоговый вывод
+SELECT
+    Месяц,
+    Тип_периода,
+    Количество_объявлений,
+    Средняя_площадь,
+    Средняя_цена_за_кв_м
+FROM combined_stats
+ORDER BY
+    Месяц,
+    CASE Тип_периода
+        WHEN 'публикация' THEN 1
+        WHEN 'снятие' THEN 2
+    END;
