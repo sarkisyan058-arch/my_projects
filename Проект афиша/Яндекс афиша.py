@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-# coding: utf-8
+[Яндекс Афиша.py](https://github.com/user-attachments/files/28442429/default.py)
 
 # # Исследовательский анализ данных в Python и
 # # проверка гипотез Яндекс Афиша
